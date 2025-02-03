@@ -32,6 +32,7 @@ float Conveyor(int numbers_to_be_generated, function<vector<int>(int)> start_fun
 
 	int buf = 0;
 	
+	// Создаём вектор, в котором будут соответствовать функции для конкретного процесса (со сдвигом на 2 (0 процесс и менеджер)) и порядковый номер функции
 	vector<tuple<function<int(int)>,int>> functions_to_be_shared;
 	int i = 0;
 	for (auto& n : functions_and_amounts)
@@ -75,23 +76,31 @@ float Conveyor(int numbers_to_be_generated, function<vector<int>(int)> start_fun
 			}
 		}
 		available_processes[functions_and_amounts.size()].push(size-1);
-
+		MPI_Request request;
+		int message_received = 0;
 		// Создаём очередь чисел для отправки
 		queue<tuple<int, int>> queue;
 		
 		// Главный цикл
 		while (true) {
-			MPI_Recv(&buf, 1, MPI_INT, MPI_ANY_SOURCE, MPI_ANY_TAG, MPI_COMM_WORLD, &st);
-			// Принимаем сигнал об окончании работы и выходим из цикла
-			if (st.MPI_TAG == functions_and_amounts.size() + 2) {
-				break;
-			}
-			// Если мы получили число не из 0 процесса, добавляем процесс в список доступных
-			if(st.MPI_SOURCE!=0)
-				available_processes[st.MPI_TAG-1].push(st.MPI_SOURCE);
-			// Добавляем комбинацию числа и номера следующей функции в очередь
-			queue.push(tuple<int,int>(buf,st.MPI_TAG));
+			// Неблокирующий прием сообщения
+			MPI_Irecv(&buf, 1, MPI_INT, MPI_ANY_SOURCE, MPI_ANY_TAG, MPI_COMM_WORLD, &request);
 
+			// Проверяем, пришло ли сообщение
+			MPI_Test(&request, &message_received, &st);
+
+			if (message_received>0)
+			{
+				// Принимаем сигнал об окончании работы и выходим из цикла
+				if (st.MPI_TAG == functions_and_amounts.size() + 2) {
+					break;
+				}
+				// Если мы получили число не из 0 процесса, добавляем процесс в список доступных
+				if (st.MPI_SOURCE != 0)
+					available_processes[st.MPI_TAG - 1].push(st.MPI_SOURCE);
+				// Добавляем комбинацию числа и номера следующей функции в очередь
+				queue.push(tuple<int, int>(buf, st.MPI_TAG));
+			}
 			//Достаём первую пару для отправки из очереди
 			tuple<int,int> a = queue.front();
 			queue.pop();
@@ -156,11 +165,13 @@ float Conveyor(int numbers_to_be_generated, function<vector<int>(int)> start_fun
 		int func_number = get<1>(functions_to_be_shared[rank - 2]);
 		while(true)
 		{
-			// Получаем на вход 
+			// Получаем на вход число
 			MPI_Recv(&buf, 1, MPI_INT, MPI_ANY_SOURCE, func_number, MPI_COMM_WORLD, &st);
+			// Если источник - 0 процесс то это сигнал об окончании работы, выходим из цикла
 			if (st.MPI_SOURCE == 0) {
 				break;
 			}
+			// Иначе производим вычисление и посылаем дальше
 			buf = function(buf);
 			MPI_Send(&buf, 1, MPI_INT, 1, func_number+1, MPI_COMM_WORLD);
 		}
