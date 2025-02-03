@@ -1,9 +1,10 @@
-#include <iostream>
+﻿#include <iostream>
 #include <mpi.h>
 #include <vector>
 #include <map>
 #include <functional> 
 #include <tuple>
+#include <queue>
 #include "ConsoleApplicationMPI.h"
 
 using namespace std;
@@ -11,135 +12,6 @@ using namespace std;
 int func(int x) 
 {
 	return(10*x);
-}
-
-void master_slave1() {
-	int rank, size;
-	MPI_Comm_rank(MPI_COMM_WORLD, &rank);
-	MPI_Comm_size(MPI_COMM_WORLD, &size);
-
-	MPI_Status st;
-
-	int buf = 0;
-	if (rank == 0)
-	{
-		int init_sum = 0;
-		int sum = 0;
-		int N;
-		cout << "Enter a number of random numbers:\n";
-		cin >> N;
-		vector<int> numbers(N);
-
-		for (int i = 0; i < N; i++) {
-
-			numbers[i] = rand();
-			init_sum += func(numbers[i]);
-		}
-		for (int i = 1; i < size; i++) {
-			if (i >= N) {
-				break;
-			}
-			buf = numbers[i - 1];
-
-			MPI_Send(&buf, 1, MPI_INT, i, 0, MPI_COMM_WORLD);
-		}
-		int next_id = size - 1;
-		int closed_process_count = 0;
-		while (true) {
-			MPI_Recv(&buf, 1, MPI_INT, MPI_ANY_SOURCE, 0, MPI_COMM_WORLD, &st);
-			cout << "Recieved BUF:" << buf << "\n";
-			sum += buf;
-			if (next_id < N)
-			{
-				buf = numbers[next_id];
-				MPI_Send(&buf, 1, MPI_INT, st.MPI_SOURCE, 0, MPI_COMM_WORLD);
-				next_id++;
-			}
-			else {
-				buf = -1;
-				MPI_Send(&buf, 1, MPI_INT, st.MPI_SOURCE, 1, MPI_COMM_WORLD);
-				closed_process_count++;
-				if (closed_process_count == size - 1) {
-					break;
-				}
-			}
-		}
-		cout << "Initial sum: " << init_sum << "\nSum: " << sum;
-	}
-	else
-	{
-		while (true)
-		{
-			MPI_Recv(&buf, 1, MPI_INT, 0, MPI_ANY_TAG, MPI_COMM_WORLD, &st);
-			if (st.MPI_TAG == 1) {
-				break;
-			}
-			cout << buf << endl;
-			buf = func(buf);
-			MPI_Send(&buf, 1, MPI_INT, 0, 0, MPI_COMM_WORLD);
-		}
-	}
-
-	MPI_Finalize();
-}
-
-void butterfly_sum_pow2() {
-
-	int rank, size,step_to_output = 3;
-
-	MPI_Comm_rank(MPI_COMM_WORLD, &rank);
-	MPI_Comm_size(MPI_COMM_WORLD, &size);
-
-	MPI_Status st;
-
-	int num= rank+1;
-	int cnt = 0;
-
-	for (int step_dist = 1; step_dist <= size / 2;step_dist*=2) {
-		int buf = num;
-		if (rank % (step_dist * 2) < step_dist) {
-			MPI_Send(&buf, 1, MPI_INT, rank + step_dist, 0, MPI_COMM_WORLD);
-			MPI_Recv(&buf, 1, MPI_INT, rank + step_dist, 0, MPI_COMM_WORLD, &st);
-		}
-		else {
-			MPI_Send(&buf, 1, MPI_INT, rank - step_dist, 0, MPI_COMM_WORLD);
-			MPI_Recv(&buf, 1, MPI_INT, rank - step_dist, 0, MPI_COMM_WORLD, &st);
-		}
-		num = num + buf;
-		cnt++;
-		if(cnt == step_to_output)
-			cout<<"Step: "<<cnt<< " Rank: " << rank << " Num: " << num << "\n";
-	}
-	MPI_Finalize();
-}
-void butterfly_sum() {
-
-	int rank, size, step_to_output = 3;
-
-	MPI_Comm_rank(MPI_COMM_WORLD, &rank);
-	MPI_Comm_size(MPI_COMM_WORLD, &size);
-
-	MPI_Status st;
-
-	int num = rank + 1;
-	int cnt = 0;
-
-	for (int step_dist = 1; step_dist <= size / 2; step_dist *= 2) {
-		int buf = num;
-		if (rank % (step_dist * 2) < step_dist) {
-			MPI_Send(&buf, 1, MPI_INT, rank + step_dist, 0, MPI_COMM_WORLD);
-			MPI_Recv(&buf, 1, MPI_INT, rank + step_dist, 0, MPI_COMM_WORLD, &st);
-		}
-		else {
-			MPI_Send(&buf, 1, MPI_INT, rank - step_dist, 0, MPI_COMM_WORLD);
-			MPI_Recv(&buf, 1, MPI_INT, rank - step_dist, 0, MPI_COMM_WORLD, &st);
-		}
-		num = num + buf;
-		cnt++;
-		if (cnt == step_to_output)
-			cout << "Step: " << cnt << " Rank: " << rank << " Num: " << num << "\n";
-	}
-	MPI_Finalize();
 }
 
 float Conveyor(int numbers_to_be_generated, function<vector<int>(int)> start_function, map<function<int(int)>, int> functions_and_amounts, function<int(int,int)> reduction_function) {
@@ -152,7 +24,7 @@ float Conveyor(int numbers_to_be_generated, function<vector<int>(int)> start_fun
 	for (auto& n : functions_and_amounts)
 		sum_of_elems += (int)n.second;
 
-	if (sum_of_elems > size - 2) {
+	if (sum_of_elems > size - 3) {
 		throw new exception("Not enough processes");
 	}
 
@@ -170,65 +42,130 @@ float Conveyor(int numbers_to_be_generated, function<vector<int>(int)> start_fun
 		}
 		i++;
 	}
-
+	// 0 процесс отвечает за генерацию чисел, их отправку в менеджер для начала работы конвейера и рассылку сигналов об окончании работы
 	if (rank == 0) {
+		int finished_reductions = 0;
 		vector<int> numbers_to_be_passed = start_function(numbers_to_be_generated);
+		// Первичная рассылка сгенерированных чисел
 		for (int i = 0; i < numbers_to_be_generated; i++) {
 			buf = numbers_to_be_passed[i];
-			MPI_Send(&buf, 1, MPI_INT, MPI_ANY_SOURCE , 0 , MPI_COMM_WORLD);
+			MPI_Send(&buf, 1, MPI_INT, 1 , 0 , MPI_COMM_WORLD);
 		}
-		MPI_Send(&buf, 1, MPI_INT, 1, functions_and_amounts.size()+1, MPI_COMM_WORLD);
+		// Проверка на количество чисел, прошедших через конвейер
+		while (finished_reductions < numbers_to_be_passed.size()) {
+			MPI_Recv(&buf, 1, MPI_INT, 1, MPI_ANY_TAG, MPI_COMM_WORLD, &st);
+			finished_reductions++;
+		}
+		// Рассылка всем процессам сигнала об окончании работы
+		MPI_Send(&buf, 1, MPI_INT, i, functions_and_amounts.size() + 2, MPI_COMM_WORLD);
+		for (int i = 2; i < size; i++) {
+			MPI_Send(&buf, 1, MPI_INT, i, get<1>(functions_to_be_shared[i-2]), MPI_COMM_WORLD);
+		}
 	}
+	// Первый процесс - процесс менеджер
+	if (rank == 1) {
+		map<int, queue<int>> available_processes;
+		// Заполняем словарь списками номеров процессов, соответствующих функциям
+		for (int i = 0; i < functions_and_amounts.size(); i++) {
+			available_processes[i] = queue<int>();
+			for (int j = 0; j < functions_to_be_shared.size();j++) {
+				if (get<1>(functions_to_be_shared[j]) == i) {
+					available_processes[i].push(j+2);
+				}
+			}
+		}
+		available_processes[functions_and_amounts.size()].push(size-1);
+
+		// Создаём очередь чисел для отправки
+		queue<tuple<int, int>> queue;
+		
+		// Главный цикл
+		while (true) {
+			MPI_Recv(&buf, 1, MPI_INT, MPI_ANY_SOURCE, MPI_ANY_TAG, MPI_COMM_WORLD, &st);
+			// Принимаем сигнал об окончании работы и выходим из цикла
+			if (st.MPI_TAG == functions_and_amounts.size() + 2) {
+				break;
+			}
+			// Если мы получили число не из 0 процесса, добавляем процесс в список доступных
+			if(st.MPI_SOURCE!=0)
+				available_processes[st.MPI_TAG-1].push(st.MPI_SOURCE);
+			// Добавляем комбинацию числа и номера следующей функции в очередь
+			queue.push(tuple<int,int>(buf,st.MPI_TAG));
+
+			//Достаём первую пару для отправки из очереди
+			tuple<int,int> a = queue.front();
+			queue.pop();
+
+			// Если нет доступных процессов у функции, возвращаем пару в конец очереди
+			if (available_processes[get<1>(a)].size() == 0) {
+				queue.push(a);
+			}
+			// Иначе отправляем свободному процессу соответствующей функции
+			else {
+				buf = get<0>(a);
+				// Если получили из последнего процесса, посылаем сигнал 0 процессу о том что одно из чисел завершило путь 
+				if (st.MPI_TAG == functions_and_amounts.size() + 1) {
+					MPI_Send(&buf, 1, MPI_INT, 0, get<1>(a), MPI_COMM_WORLD);
+					continue;
+				}
+				MPI_Send(&buf, 1,MPI_INT, available_processes[get<1>(a)].front(), get<1>(a),MPI_COMM_WORLD);
+				available_processes[get<1>(a)].pop();
+			}
+		}
+	}
+	// Последний процесс всегда отвечает за редукцию
 	if (rank == size-1) {
 		double result;
 		bool initialized = false;
-
+		//Основной цикл
 		while (true)
 		{
-			MPI_Recv(&buf, 1, MPI_INT, MPI_ANY_SOURCE, MPI_ANY_TAG, MPI_COMM_WORLD, &st);
-			if (st.MPI_TAG == functions_and_amounts.size() + 1) {
+			//Получаем число
+			MPI_Recv(&buf, 1, MPI_INT, MPI_ANY_SOURCE, functions_and_amounts.size(), MPI_COMM_WORLD, &st);
+			// Если оно пришло из 0 процесса - это сигнал об окончании работы, выходим из цикла
+			if (st.MPI_SOURCE == 0) {
 				break;
 			}
-			if(st.MPI_TAG == functions_and_amounts.size())
+			else
 			{
+				// Если у нас нет ни одного числа в результате, мы берём за результат поступившее
 				if (!initialized)
 				{
 					result = buf;
 					initialized = true;
+					MPI_Send(&buf, 1, MPI_INT, 1, functions_and_amounts.size() + 1, MPI_COMM_WORLD);
 				}
+				// Если же есть, мы производим редукцию значения и поступившего числа
 				else
 				{
 					result = reduction_function(result, buf);
+					MPI_Send(&buf, 1, MPI_INT, 1, functions_and_amounts.size() + 1, MPI_COMM_WORLD);
 				}
 			}
-			else {
-				MPI_Send(&buf, 1, MPI_INT, st.MPI_SOURCE, st.MPI_TAG, MPI_COMM_WORLD);
-			}
 		}
+		// В консоль выводим результат
 		if (initialized)
 		{
 			cout << "Outcome: " << result;
 		}
 		
 	}
+	// Все остальные процессы действуют одинаково
 	else {
+		function<int(int)> function = get<0>(functions_to_be_shared[rank - 2]);
+		int func_number = get<1>(functions_to_be_shared[rank - 2]);
 		while(true)
 		{
-			MPI_Recv(&buf, 1, MPI_INT, MPI_ANY_SOURCE, MPI_ANY_TAG, MPI_COMM_WORLD, &st);
-			if (st.MPI_TAG == functions_and_amounts.size() + 1) {
+			// Получаем на вход 
+			MPI_Recv(&buf, 1, MPI_INT, MPI_ANY_SOURCE, func_number, MPI_COMM_WORLD, &st);
+			if (st.MPI_SOURCE == 0) {
 				break;
 			}
-			if(st.MPI_TAG == get<1>(functions_to_be_shared[rank - 1]))
-			{
-				buf = get<0>(functions_to_be_shared[rank - 1])(buf);
-				MPI_Send(&buf, 1, MPI_INT, get<1>(functions_to_be_shared[rank]), 0, MPI_COMM_WORLD);
-			}
-			else {
-				MPI_Send(&buf, 1, MPI_INT, st.MPI_SOURCE, st.MPI_TAG, MPI_COMM_WORLD);
-			}
+			buf = function(buf);
+			MPI_Send(&buf, 1, MPI_INT, 1, func_number+1, MPI_COMM_WORLD);
 		}
-		MPI_Send(&buf, 1, MPI_INT, rank + 1, 1, MPI_COMM_WORLD);
 	}
+	MPI_Finalize();
 }
 
 int main(int argc, char* argv[])
@@ -239,12 +176,7 @@ int main(int argc, char* argv[])
 	{
 		return errCode;
 	}
-
 	
-
-	
-	//master_slave1();
-	//butterfly_sum_pow2();
 	
 	return 0;
 }
