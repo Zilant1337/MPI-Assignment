@@ -62,7 +62,6 @@ float Conveyor(int numbers_to_be_generated, function<vector<int>(int)> start_fun
         }
         i++;
     }
-    cout <<functions_to_be_shared.size()<<"\n\n";
     // 0 процесс отвечает за генерацию чисел, их отправку в менеджер для начала работы конвейера и рассылку сигналов об окончании работы
     if (rank == 0) {
         int finished_reductions = 0;
@@ -71,10 +70,10 @@ float Conveyor(int numbers_to_be_generated, function<vector<int>(int)> start_fun
         for (int i = 0; i < numbers_to_be_generated; i++) {
             buf = numbers_to_be_passed[i];
             MPI_Send(&buf, 1, MPI_INT, 1, 0, MPI_COMM_WORLD);
-            cout << "Process 0: Sent number " << buf;
+            cout << "Process 0: Sent number " << buf<<"\n";
         }
         // Проверка на количество чисел, прошедших через конвейер
-        while (finished_reductions < numbers_to_be_passed.size()) {
+        while (finished_reductions <= numbers_to_be_passed.size()) {
             MPI_Recv(&buf, 1, MPI_INT, 1, MPI_ANY_TAG, MPI_COMM_WORLD, &st);
             finished_reductions++;
         }
@@ -83,6 +82,7 @@ float Conveyor(int numbers_to_be_generated, function<vector<int>(int)> start_fun
         for (int i = 0; i < functions_to_be_shared.size(); i++) {
             MPI_Send(&buf, 1, MPI_INT, i+2, get<1>(functions_to_be_shared[i]), MPI_COMM_WORLD);
         }
+        MPI_Send(&buf, 1, MPI_INT, size - 1, functions_and_amounts.size(), MPI_COMM_WORLD);
     }
     // Первый процесс - процесс менеджер
     if (rank == 1) {
@@ -101,7 +101,7 @@ float Conveyor(int numbers_to_be_generated, function<vector<int>(int)> start_fun
         int message_received = 0;
         // Создаём очередь чисел для отправки
         deque<tuple<int, int>> queue;
-
+        bool message_reset = true;
         // Главный цикл
         while (true) {
             // Неблокирующий прием сообщения
@@ -116,6 +116,7 @@ float Conveyor(int numbers_to_be_generated, function<vector<int>(int)> start_fun
                 if (st.MPI_TAG == functions_and_amounts.size() + 2) {
                     break;
                 }
+                cout << "Process 1: Got number " << buf<< " to be sent to function number "<<st.MPI_TAG<<"\n";
                 // Если мы получили число не из 0 процесса, добавляем процесс в список доступных
                 if (st.MPI_SOURCE != 0)
                     available_processes[st.MPI_TAG - 1].push(st.MPI_SOURCE);
@@ -176,11 +177,13 @@ float Conveyor(int numbers_to_be_generated, function<vector<int>(int)> start_fun
                     result = buf;
                     initialized = true;
                     MPI_Send(&buf, 1, MPI_INT, 1, functions_and_amounts.size() + 1, MPI_COMM_WORLD);
+                    cout << "Reduction: Got number " << buf << "\n";
                 }
                 // Если же есть, мы производим редукцию значения и поступившего числа
                 else
                 {
                     result = reduction_function(result, buf);
+                    cout << "Reduction: Got number " << buf << " Total reduction: "<< result << "\n";
                     MPI_Send(&buf, 1, MPI_INT, 1, functions_and_amounts.size() + 1, MPI_COMM_WORLD);
                 }
             }
