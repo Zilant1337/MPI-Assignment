@@ -5,6 +5,7 @@
 #include <functional> 
 #include <tuple>
 #include <queue>
+#include <deque>
 #include "ConsoleApplicationMPI.h"
 
 using namespace std;
@@ -13,7 +14,22 @@ int func(int x)
 {
 	return(10*x);
 }
-
+vector<int> starting_func(int number_count) {
+	vector<int> numbers;
+	for (int i = 0; i < number_count; i++) {
+		numbers.push_back(i);
+	}
+	return numbers;
+}
+int f1(int a) {
+	return a + 1;
+}
+int f2(int a) {
+	return a * a;
+}
+int reduction(int res, int a) {
+	res += a;
+}
 float Conveyor(int numbers_to_be_generated, function<vector<int>(int)> start_function, map<function<int(int)>, int> functions_and_amounts, function<int(int,int)> reduction_function) {
 	//int randNum = rand() % (max - min + 1) + min;
 	int rank, size;
@@ -24,8 +40,8 @@ float Conveyor(int numbers_to_be_generated, function<vector<int>(int)> start_fun
 	for (auto& n : functions_and_amounts)
 		sum_of_elems += (int)n.second;
 
-	if (sum_of_elems > size - 3) {
-		throw new exception("Not enough processes");
+	if (sum_of_elems != size - 3) {
+		throw new exception("Wrong number of processes");
 	}
 
 	MPI_Status st;
@@ -79,7 +95,7 @@ float Conveyor(int numbers_to_be_generated, function<vector<int>(int)> start_fun
 		MPI_Request request;
 		int message_received = 0;
 		// Создаём очередь чисел для отправки
-		queue<tuple<int, int>> queue;
+		deque<tuple<int, int>> queue;
 		
 		// Главный цикл
 		while (true) {
@@ -99,15 +115,19 @@ float Conveyor(int numbers_to_be_generated, function<vector<int>(int)> start_fun
 				if (st.MPI_SOURCE != 0)
 					available_processes[st.MPI_TAG - 1].push(st.MPI_SOURCE);
 				// Добавляем комбинацию числа и номера следующей функции в очередь
-				queue.push(tuple<int, int>(buf, st.MPI_TAG));
+				queue.push_back(tuple<int, int>(buf, st.MPI_TAG));
 			}
 			//Достаём первую пару для отправки из очереди
 			tuple<int,int> a = queue.front();
-			queue.pop();
+			queue.pop_front();
 
 			// Если нет доступных процессов у функции, возвращаем пару в конец очереди
 			if (available_processes[get<1>(a)].size() == 0) {
-				queue.push(a);
+				// В целях выполнения условия о сохранении порядка подачи чисел в конвейер, числа полученные на момент начала ставим в начало очереди
+				if (get<1>(a) == 0) {
+					queue.push_front(a);
+				}
+				queue.push_back(a);
 			}
 			// Иначе отправляем свободному процессу соответствующей функции
 			else {
@@ -187,7 +207,10 @@ int main(int argc, char* argv[])
 	{
 		return errCode;
 	}
-	
+	map<function<int(int)>, int> functions_and_amounts;
+	functions_and_amounts[f1] = 1;
+	functions_and_amounts[f2] = 1;
+	Conveyor(3, starting_func, functions_and_amounts, reduction);
 	
 	return 0;
 }
