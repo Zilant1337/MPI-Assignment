@@ -141,6 +141,10 @@ float Conveyor(int numbers_to_be_generated, function<vector<int>(int)> start_fun
                         queue.push_front(a);
                     }
                     queue.push_back(a);
+                    /*else
+                    {
+                        queue.push_back(a);
+                    }*/
                 }
                 // Иначе отправляем свободному процессу соответствующей функции
                 else {
